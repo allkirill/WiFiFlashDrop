@@ -5,8 +5,13 @@ import tempfile
 import os
 import json
 import winreg
+from datetime import datetime
 
-CONFIG_FILE = "obsidian_sync_config.json"
+# Хранение настроек в AppData (избегаем проблем с правами в Program Files)
+APP_DATA_DIR = os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), "ObsidianSync")
+os.makedirs(APP_DATA_DIR, exist_ok=True)
+CONFIG_FILE = os.path.join(APP_DATA_DIR, "config.json")
+
 
 def find_winscp():
     """Ищет WinSCP.com в стандартных папках установки"""
@@ -23,15 +28,12 @@ def get_winscp_sessions():
     """Читает сохраненные сессии из реестра WinSCP"""
     sessions = []
     try:
-        # Открываем ветку реестра WinSCP (для текущего пользователя)
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Martin Prikryl\WinSCP 2\Sessions")
         i = 0
         while True:
             try:
                 subkey_name = winreg.EnumKey(key, i)
-                # Дефолтную сессию пропускаем
                 if subkey_name.lower() != "default settings":
-                    # WinSCP кодирует имена сессий в реестре, декодируем базовые символы
                     name = subkey_name.replace("%3A", ":").replace("%2F", "/").replace("%5C", "\\")
                     sessions.append(name)
                 i += 1
@@ -39,7 +41,6 @@ def get_winscp_sessions():
                 break
         winreg.CloseKey(key)
     except FileNotFoundError:
-        # WinSCP не установлен или нет сохраненных сессий
         pass
     return sessions
 
@@ -48,7 +49,7 @@ class ObsidianSyncApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Obsidian Sync")
-        self.root.geometry("420x380")
+        self.root.geometry("420x480") # Увеличили высоту
         self.root.resizable(False, False)
 
         # Переменные настроек
@@ -58,7 +59,7 @@ class ObsidianSyncApp:
 
         # Переменные интерфейса
         self.allow_delete = tk.BooleanVar(value=False)
-        self.preview_only = tk.BooleanVar(value=False)
+        self.last_sync = tk.StringVar(value="Никогда")
 
         # Загрузка настроек
         self.load_config()
@@ -71,13 +72,13 @@ class ObsidianSyncApp:
 
         self.setup_ui()
 
-        # Если путь к WinSCP пуст, пробуем найти автоматически
+        # Автопоиск WinSCP
         if not self.winscp_path.get():
             found_path = find_winscp()
             if found_path:
                 self.winscp_path.set(found_path)
 
-        # Если настройки не завершены, открываем окно настроек
+        # Проверка настроек при первом запуске
         if not self.is_config_valid():
             self.root.after(100, self.open_settings)
 
@@ -89,6 +90,8 @@ class ObsidianSyncApp:
                     self.winscp_path.set(data.get("winscp", ""))
                     self.session_name.set(data.get("session", ""))
                     self.local_vault.set(data.get("local", ""))
+                    self.allow_delete.set(data.get("allow_delete", False))
+                    self.last_sync.set(data.get("last_sync", "Никогда"))
             except Exception:
                 pass
 
@@ -96,7 +99,9 @@ class ObsidianSyncApp:
         data = {
             "winscp": self.winscp_path.get(),
             "session": self.session_name.get(),
-            "local": self.local_vault.get()
+            "local": self.local_vault.get(),
+            "allow_delete": self.allow_delete.get(),
+            "last_sync": self.last_sync.get()
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
@@ -111,12 +116,18 @@ class ObsidianSyncApp:
         ttk.Label(header_frame, text="Obsidian Sync", style="Header.TLabel").pack()
         ttk.Label(header_frame, text="Синхронизация ПК ⇄ Телефон").pack()
 
-        # Информация о текущем хранилище
+        # Информация
         info_frame = ttk.Frame(root, padding=10)
         info_frame.pack(fill=tk.X)
+        
         ttk.Label(info_frame, text="Локальное хранилище:").grid(row=0, column=0, sticky=tk.W, pady=2)
         self.vault_label = ttk.Label(info_frame, text="Не выбрано", foreground="gray")
         self.vault_label.grid(row=0, column=1, sticky=tk.W, pady=2)
+        
+        ttk.Label(info_frame, text="Последняя синхронизация:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.sync_time_label = ttk.Label(info_frame, text=self.last_sync.get(), foreground="gray")
+        self.sync_time_label.grid(row=1, column=1, sticky=tk.W, pady=2)
+        
         self.update_info_label()
 
         # Настройки синхронизации
@@ -130,29 +141,30 @@ class ObsidianSyncApp:
         ).pack(anchor=tk.W)
         ttk.Label(settings_frame, text="(Если выключено: файлы только добавляются и обновляются)", 
                   foreground="gray", font=("Segoe UI", 8)).pack(anchor=tk.W)
-        
-        ttk.Checkbutton(
-            settings_frame,
-            text="Только предпросмотр (не применять изменения)",
-            variable=self.preview_only
-        ).pack(anchor=tk.W, pady=(5,0))
 
-        # Кнопки действий
+        # ВАЖНО: Сначала упаковываем нижнюю рамку, чтобы она всегда была видна
+        bottom_frame = ttk.Frame(root, padding=10)
+        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Button(bottom_frame, text="⚙ Настройки", command=self.open_settings).pack(side=tk.LEFT)
+        ttk.Button(bottom_frame, text="Выход", command=self.root.destroy).pack(side=tk.RIGHT)
+
+        # Кнопки действий (занимают оставшееся пространство)
         btn_frame = ttk.Frame(root, padding=10)
         btn_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.btn_push = ttk.Button(btn_frame, text="⬆ Отправить на телефон (ПК → Телефон)", command=lambda: self.sync("remote"))
+        self.btn_push = ttk.Button(btn_frame, text="⬆ Синхронизировать: ПК → Телефон", command=lambda: self.sync("remote", False))
         self.btn_push.pack(fill=tk.X, pady=3)
 
-        self.btn_pull = ttk.Button(btn_frame, text="⬇ Скачать на ПК (Телефон → ПК)", command=lambda: self.sync("local"))
+        self.btn_pull = ttk.Button(btn_frame, text="⬇ Синхронизировать: Телефон → ПК", command=lambda: self.sync("local", False))
         self.btn_pull.pack(fill=tk.X, pady=3)
 
-        # Нижние кнопки
-        bottom_frame = ttk.Frame(root, padding=10)
-        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        ttk.Separator(btn_frame).pack(fill=tk.X, pady=10)
 
-        ttk.Button(bottom_frame, text="⚙ Настройки", command=self.open_settings).pack(side=tk.LEFT)
-        ttk.Button(bottom_frame, text="Выход", command=self.root.destroy).pack(side=tk.RIGHT)
+        self.btn_preview_push = ttk.Button(btn_frame, text="👀 Предпросмотр: ПК → Телефон", command=lambda: self.sync("remote", True))
+        self.btn_preview_push.pack(fill=tk.X, pady=3)
+
+        self.btn_preview_pull = ttk.Button(btn_frame, text="👀 Предпросмотр: Телефон → ПК", command=lambda: self.sync("local", True))
+        self.btn_preview_pull.pack(fill=tk.X, pady=3)
 
     def update_info_label(self):
         vault = self.local_vault.get()
@@ -164,9 +176,11 @@ class ObsidianSyncApp:
     def toggle_buttons(self, state):
         self.btn_push.config(state=state)
         self.btn_pull.config(state=state)
+        self.btn_preview_push.config(state=state)
+        self.btn_preview_pull.config(state=state)
         self.root.config(cursor="watch" if state == tk.DISABLED else "")
 
-    def sync(self, direction):
+    def sync(self, direction, preview=False):
         if not self.is_config_valid():
             messagebox.showwarning("Внимание", "Сначала укажите пути в настройках!")
             self.open_settings()
@@ -183,15 +197,12 @@ class ObsidianSyncApp:
             messagebox.showerror("Ошибка", f"Локальная папка не найдена:\n{local}")
             return
 
-        # Формируем команду
-        command = f"synchronize {direction}"
-        
-        # Если включено удаление - добавляем флаг mirror.
-        # Без него WinSCP скопирует новые и измененные файлы, но не удалит старые.
+        # Формируем команду WinSCP (исправлено согласно документации и твоему замечанию)
+        command = f"synchronize {direction} -mirror"
         if self.allow_delete.get():
-            command += " -mirror"
+            command += " -delete"
             
-        if self.preview_only.get():
+        if preview:
             command += " -preview"
 
         script = f"""option batch abort
@@ -203,7 +214,6 @@ cd /
 exit
 """
 
-        # Создаем временный файл скрипта
         with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8") as f:
             f.write(script)
             script_name = f.name
@@ -211,23 +221,26 @@ exit
         self.toggle_buttons(tk.DISABLED)
 
         try:
-            # Запускаем WinSCP, перехватывая вывод
             result = subprocess.run(
                 [winscp, f"/script={script_name}"],
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
                 errors='ignore',
-                creationflags=subprocess.CREATE_NO_WINDOW # Скрываем черное окно консоли
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
 
             if result.returncode == 0:
-                if self.preview_only.get():
+                if preview:
                     messagebox.showinfo("Предпросмотр", "Предпросмотр завершен успешно.")
                 else:
+                    # Обновляем время последней синхронизации
+                    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+                    self.last_sync.set(now)
+                    self.sync_time_label.config(text=now, foreground="black")
+                    self.save_config()
                     messagebox.showinfo("Успех", "Синхронизация завершена успешно!")
             else:
-                # Показываем ошибки
                 error_msg = result.stdout or result.stderr or "Неизвестная ошибка"
                 messagebox.showerror("Ошибка WinSCP", error_msg)
 
@@ -245,25 +258,21 @@ exit
         win.transient(self.root)
         win.grab_set()
 
-        # Путь к WinSCP
         ttk.Label(win, text="Путь к WinSCP.com:").grid(row=0, column=0, padx=10, pady=10, sticky=tk.W)
         winscp_entry = ttk.Entry(win, textvariable=self.winscp_path, width=40)
         winscp_entry.grid(row=0, column=1, padx=10, pady=10)
         ttk.Button(win, text="...", width=3, command=lambda: self.browse_file(winscp_entry)).grid(row=0, column=2, padx=5, pady=10)
 
-        # Сессия (выпадающий список)
         ttk.Label(win, text="Сессия WinSCP:").grid(row=1, column=0, padx=10, pady=10, sticky=tk.W)
         sessions = get_winscp_sessions()
         session_combo = ttk.Combobox(win, textvariable=self.session_name, values=sessions, width=37)
         session_combo.grid(row=1, column=1, padx=10, pady=10)
 
-        # Локальное хранилище
         ttk.Label(win, text="Локальное хранилище:").grid(row=2, column=0, padx=10, pady=10, sticky=tk.W)
         vault_entry = ttk.Entry(win, textvariable=self.local_vault, width=40)
         vault_entry.grid(row=2, column=1, padx=10, pady=10)
         ttk.Button(win, text="...", width=3, command=lambda: self.browse_dir(vault_entry)).grid(row=2, column=2, padx=5, pady=10)
 
-        # Кнопки сохранения
         btn_frame = ttk.Frame(win)
         btn_frame.grid(row=3, column=0, columnspan=3, pady=15)
         ttk.Button(btn_frame, text="Сохранить", command=lambda: self.save_settings(win)).pack(side=tk.LEFT, padx=10)
