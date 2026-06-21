@@ -48,7 +48,7 @@ def get_winscp_sessions():
 class ObsidianSyncApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Obsidian Sync")
+        self.root.title("WiFiFlashDrop")
         self.root.geometry("420x480") # Увеличили высоту
         self.root.resizable(False, False)
 
@@ -113,7 +113,7 @@ class ObsidianSyncApp:
         # Шапка
         header_frame = ttk.Frame(root, padding=10)
         header_frame.pack(fill=tk.X)
-        ttk.Label(header_frame, text="Obsidian Sync", style="Header.TLabel").pack()
+        ttk.Label(header_frame, text="WiFiFlashDrop", style="Header.TLabel").pack()
         ttk.Label(header_frame, text="Синхронизация ПК ⇄ Телефон").pack()
 
         # Информация
