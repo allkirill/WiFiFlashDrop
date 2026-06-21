@@ -5,7 +5,8 @@
 
 Для работы требуется приложение на андроид (я использую бесплатную SSH/SFTP Server (от Banana Studio).
 Также потребуется через WinSCP подрубится к своему телефону-серверу. А эта утилита чисто батник с простым интерфейсом, который превращат дальнейшую синхронизацию как: запустил-кликнул-вышел.
-<img width="628" height="768" alt="Screenshot_20260621191519" src="https://github.com/user-attachments/assets/0b2ca94f-6142-48d9-87c3-de945f25b0f9" />
+<img width="626" height="769" alt="Screenshot_20260621191839" src="https://github.com/user-attachments/assets/cd65e6f5-5da3-43dd-96be-25468a9be5df" />
+
 
 
 Кнопки синхронизации:
@@ -25,7 +26,7 @@
 
 Сборка exe:
 ```
-py -m PyInstaller --onefile --windowed "Obsidian-Sync.py"
+py -m PyInstaller --onefile --windowed "WiFiFlashDrop.py"
 ```
 
 
